@@ -58,9 +58,8 @@ class ADS1293:
         self.cs.value(1)
 
     def read_reg(self, reg: int) -> int:
-        """Read a single byte from a register."""
+        """Read a single byte from a register (Read flag = Bit 7 set to 1)."""
         self._select()
-        # Read command bit 7 is 1
         header = bytearray([(reg & 0x7F) | 0x80])
         self.spi.write(header)
         buf = self.spi.read(1)
@@ -68,9 +67,8 @@ class ADS1293:
         return buf[0]
 
     def write_reg(self, reg: int, value: int):
-        """Write a single byte to a register."""
+        """Write a single byte to a register (Write flag = Bit 7 set to 0)."""
         self._select()
-        # Write command bit 7 is 0
         header = bytearray([reg & 0x7F, value & 0xFF])
         self.spi.write(header)
         self._deselect()
@@ -85,7 +83,7 @@ class ADS1293:
         return buf
 
     def is_data_ready(self) -> bool:
-        """Check if data is ready via DRDY pin or status register."""
+        """Check if new ECG data conversion is ready."""
         if self.drdy:
             return self.drdy.value() == 0
         else:
@@ -101,7 +99,7 @@ class ADS1293:
 
         :param sample_rate_hz: Desired output data rate (200, 400, or 800 Hz).
         """
-        # Stop conversion during setup
+        # 0. Stop continuous conversion while configuring registers
         self.write_reg(REG_CONFIG, 0x00)
 
         # 1. Flex Routing Setup:
@@ -113,41 +111,36 @@ class ADS1293:
         self.write_reg(REG_FLEX_CH2_CN, 0x1A)
         self.write_reg(REG_FLEX_CH3_CN, 0x19)
 
-        # 2. Enable RLD (Right Leg Drive) on IN4 or internal feedback
-        # RLD connected to IN4 (0x04) or automated feedback
+        # 2. RLD (Right Leg Drive) setup using IN4 / internal common mode
         self.write_reg(REG_RLD_CN, 0x04)
 
-        # 3. Set Resolution: 24-bit resolution on all 3 channels
-        # AFE_RES register = 0x07 (high resolution on Ch1, Ch2, Ch3)
+        # 3. Set High Resolution (24-bit) for Ch1, Ch2, Ch3
         self.write_reg(REG_AFE_RES, 0x07)
 
-        # 4. Power up AFE channels (Ch1, Ch2, Ch3 enabled)
-        # Bit 0, 1, 2 = 0 -> enable analog front end for Ch1, Ch2, Ch3
+        # 4. Power up analog front-end for Ch1, Ch2, Ch3
         self.write_reg(REG_AFE_SHDN_CN, 0x00)
 
-        # 5. Set Decimation Rates (R2, R3) for desired sample rate
-        # Clock = 4.096 MHz
-        # If R2=4 (0x04), R3=16 (0x10) -> Output rate = 4096000 / (4 * 16 * 320) ~ 200 Hz
+        # 5. Set Decimation Rates (R2, R3) for chosen sample rate
         if sample_rate_hz <= 200:
             self.write_reg(REG_R2_RATE, 0x04)      # R2 = 4
             self.write_reg(REG_R3_RATE_CH1, 0x10)  # R3 = 16
             self.write_reg(REG_R3_RATE_CH2, 0x10)
             self.write_reg(REG_R3_RATE_CH3, 0x10)
         elif sample_rate_hz <= 400:
-            self.write_reg(REG_R2_RATE, 0x02)      # R2 = 2
-            self.write_reg(REG_R3_RATE_CH1, 0x10)  # R3 = 16
+            self.write_reg(REG_R2_RATE, 0x02)
+            self.write_reg(REG_R3_RATE_CH1, 0x10)
             self.write_reg(REG_R3_RATE_CH2, 0x10)
             self.write_reg(REG_R3_RATE_CH3, 0x10)
         else:
-            self.write_reg(REG_R2_RATE, 0x01)      # R2 = 1
-            self.write_reg(REG_R3_RATE_CH1, 0x10)  # R3 = 16
+            self.write_reg(REG_R2_RATE, 0x01)
+            self.write_reg(REG_R3_RATE_CH1, 0x10)
             self.write_reg(REG_R3_RATE_CH2, 0x10)
             self.write_reg(REG_R3_RATE_CH3, 0x10)
 
-        # 6. Configure DRDY interrupt source (Channel 1 ECG ready)
+        # 6. Set DRDYB interrupt source (Channel 1 ECG ready bit 3)
         self.write_reg(REG_DRDYB_SRC, 0x08)
 
-        # 7. Enable Channel 1, 2, and 3 ECG conversion loop
+        # 7. Enable Channel 1, 2, and 3 conversion
         self.write_reg(REG_CH_CNFG, 0x70)
 
         # 8. Start continuous conversion mode
